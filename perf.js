@@ -21,6 +21,22 @@ export function perfMark(label) {
   lastMainEnd = end;
 }
 
+// ★ 「最後に完了した段階」を取得する（読み込みが止まったとき、どこで止まっているかを表示するため）
+export function perfLastMarkLabel() {
+  const main = spans.filter((x) => x.kind === "main");
+  return main.length ? main[main.length - 1].label : "（開始直後）";
+}
+
+// ★ 一定時間たっても読み込みが終わらないとき、onStall(経過秒, 最後に完了した段階) を呼ぶ（以後も5秒ごと）
+export function perfWatchStall(isDone, onStall, firstMs = 12000) {
+  const tick = () => {
+    if (isDone()) return;
+    onStall(Math.round(now() / 1000), perfLastMarkLabel());
+    setTimeout(tick, 5000);
+  };
+  setTimeout(tick, firstMs);
+}
+
 export function perfStart(label) {
   const span = { label, start: now(), end: null, kind: "parallel" };
   spans.push(span);
@@ -65,7 +81,7 @@ function collectBrowserTimings() {
 
 function collectSlowResources() {
   const entries = performance.getEntriesByType("resource")
-    .map((r) => ({ name: shortUrl(r.name), type: r.initiatorType, start: r.startTime, duration: r.duration, size: r.transferSize || 0 }))
+    .map((r) => ({ name: shortUrl(r.name), type: r.initiatorType, start: r.startTime, duration: r.duration, size: r.transferSize || 0, proto: r.nextHopProtocol || "" }))
     .sort((a, b) => b.duration - a.duration)
     .slice(0, 10);
   return entries;
@@ -102,7 +118,7 @@ function buildReport(page) {
   lines.push("");
   lines.push("■ 通信が遅かったリソース上位10件（所要時間 / 開始時刻 / サイズ）");
   collectSlowResources().forEach((r) => {
-    lines.push(`${r.name} [${r.type}]: ${fmt(r.duration)} / 開始 ${fmt(r.start)}${r.size ? " / " + Math.round(r.size / 1024) + "KB" : ""}`);
+    lines.push(`${r.name} [${r.type}${r.proto ? "/" + r.proto : ""}]: ${fmt(r.duration)} / 開始 ${fmt(r.start)}${r.size ? " / " + Math.round(r.size / 1024) + "KB" : ""}`);
   });
   return { text: lines.join("\n"), total: end };
 }

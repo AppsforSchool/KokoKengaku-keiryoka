@@ -1,8 +1,8 @@
-import { perfMark, perfStart, perfSample, perfNote, perfShowReport } from "./perf.js";
+import { perfMark, perfStart, perfSample, perfNote, perfShowReport, perfWatchStall } from "./perf.js";
 import { initPush, logoutPush, setupPushButton, sendProfileChangeNotification } from "./notify.js";
 
 import { runFirestoreDiagnostics } from "./diag.js";
-import { firestoreTransport, auth, db, onAuthStateChanged, signOut, collection, doc, getDoc, getDocs, addDoc, setDoc, updateDoc, query, where, onSnapshot, serverTimestamp, getCountFromServer } from "./firebase.js";
+import { firestoreTransport, firestoreCacheMode, hedged, auth, db, onAuthStateChanged, signOut, collection, doc, getDoc, getDocs, addDoc, setDoc, updateDoc, query, where, onSnapshot, serverTimestamp, getCountFromServer } from "./firebase.js";
 
 perfMark("JSモジュールの読み込み・実行開始（HTML解析・Firebase等の取得）");
 
@@ -148,6 +148,11 @@ function closeDrawer() {
 
 document.addEventListener("DOMContentLoaded", () => {
   perfMark("DOMContentLoaded（DOM構築完了まで）");
+  // ★ 読み込みが長引いたら、オーバーレイに「どの段階で止まっているか」を表示する（スマホでもコンソール無しで確認できる）
+  perfWatchStall(
+    () => loadingOverlay.classList.contains("hidden"),
+    (sec, label) => setLoadingStage(`読み込みに時間がかかっています（${sec}秒経過）／最後に完了した段階: ${label}`)
+  );
   onAuthStateChanged(auth, async (user) => {
    try {
     if (user) {
@@ -158,7 +163,7 @@ document.addEventListener("DOMContentLoaded", () => {
       drawerUserId.textContent = myUserId;
       
       setLoadingStage("ユーザー情報を確認しています...", 10);
-      const userSnapshot = await getDoc(doc(db, "users_random", myUserId));
+      const userSnapshot = await hedged(() => getDoc(doc(db, "users_random", myUserId)));
       const userData = userSnapshot.data();
       perfMark("自分のユーザー情報の取得（Firestore）");
 
@@ -189,7 +194,7 @@ document.addEventListener("DOMContentLoaded", () => {
         }
 
         // ★ プッシュ通知の初期化（失敗してもトーク一覧の表示には影響させない）
-        perfNote(`Firestore通信方式: ${firestoreTransport}`);
+        perfNote(`Firestore通信方式: ${firestoreTransport} / 永続キャッシュ: ${firestoreCacheMode}`);
         const endPushPerf = perfStart("OneSignal初期化（キー取得・SDK・login）");
         Promise.resolve(initPush(db, myUserId)).then(endPushPerf, endPushPerf);
         setupPushButton("enable-push-button");
@@ -467,7 +472,7 @@ async function openProfileModal(userId, startEditMode = false) {
   }
 
   try {
-    const userSnapshot = await getDoc(doc(db, "users_random", userId));
+    const userSnapshot = await hedged(() => getDoc(doc(db, "users_random", userId)));
     if (userSnapshot.exists()) {
       const userData = userSnapshot.data();
 
@@ -638,7 +643,7 @@ function getUserDisplayName(userId) {
 // ★ 個人タブ用に全ユーザーを読み込む（名前・アイコンはユーザーキャッシュにも反映する）
 async function loadAllUsers() {
   try {
-    const snapshot = await getDocs(collection(db, "users_random"));
+    const snapshot = await hedged(() => getDocs(collection(db, "users_random")));
     allUsersList = snapshot.docs.map((doc) => {
       const d = doc.data() || {};
       setUserCache(doc.id, {

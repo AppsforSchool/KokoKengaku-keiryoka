@@ -1,8 +1,8 @@
-import { perfMark, perfStart, perfSample, perfNote, perfShowReport } from "./perf.js";
+import { perfMark, perfStart, perfSample, perfNote, perfShowReport, perfWatchStall } from "./perf.js";
 import { initPush, logoutPush, setupPushButton, sendMessageNotification, sendPushToUsers, sendProfileChangeNotification } from "./notify.js";
 
 import { runFirestoreDiagnostics } from "./diag.js";
-import { firestoreTransport, auth, db, onAuthStateChanged, signOut, collection, doc, getDoc, getDocs, addDoc, setDoc, updateDoc, query, where, orderBy, onSnapshot, writeBatch, serverTimestamp, arrayUnion, arrayRemove, Timestamp, documentId } from "./firebase.js";
+import { firestoreTransport, firestoreCacheMode, hedged, auth, db, onAuthStateChanged, signOut, collection, doc, getDoc, getDocs, addDoc, setDoc, updateDoc, query, where, orderBy, onSnapshot, writeBatch, serverTimestamp, arrayUnion, arrayRemove, Timestamp, documentId } from "./firebase.js";
 
 perfMark("JSモジュールの読み込み・実行開始（HTML解析・Firebase等の取得）");
 
@@ -58,7 +58,7 @@ function fetchOneUser(userId) {
   const promise = (async () => {
     const startedAt = performance.now();
     try {
-      const snapshot = await getDoc(doc(db, "users_random", userId));
+      const snapshot = await hedged(() => getDoc(doc(db, "users_random", userId)));
       perfSample("ユーザー1人分のgetDoc（並列）", performance.now() - startedAt);
 
       if (!snapshot.exists()) {
@@ -345,6 +345,11 @@ function closeDrawer() {
 
 document.addEventListener("DOMContentLoaded", () => {
   perfMark("DOMContentLoaded（DOM構築完了まで）");
+  // ★ 読み込みが長引いたら、オーバーレイに「どの段階で止まっているか」を表示する（スマホでもコンソール無しで確認できる）
+  perfWatchStall(
+    () => loadingOverlay.classList.contains("hidden"),
+    (sec, label) => setLoadingStage(`読み込みに時間がかかっています（${sec}秒経過）／最後に完了した段階: ${label}`)
+  );
   onAuthStateChanged(auth, async (user) => {
     try {
       if (user) {
@@ -352,7 +357,7 @@ document.addEventListener("DOMContentLoaded", () => {
         myUserId = user.email.split("@")[0];
         drawerUserId.textContent = myUserId;
 
-        const userSnapshot = await getDoc(doc(db, "users_random", myUserId));
+        const userSnapshot = await hedged(() => getDoc(doc(db, "users_random", myUserId)));
         const userData = userSnapshot.data();
         perfMark("自分のユーザー情報の取得（Firestore）");
 
@@ -392,7 +397,7 @@ document.addEventListener("DOMContentLoaded", () => {
           // ★ OneSignalの初期化は、トーク表示とは独立しているので、他の読み込みを待たずに先に開始する
           const endPushPerf = perfStart("OneSignal初期化（キー取得・SDK・login）");
           Promise.resolve(initPush(db, myUserId)).then(endPushPerf, endPushPerf);
-          perfNote(`Firestore通信方式: ${firestoreTransport}`);
+          perfNote(`Firestore通信方式: ${firestoreTransport} / 永続キャッシュ: ${firestoreCacheMode}`);
 
           setLoadingStage("トークルーム・メンバー情報を読み込んでいます...", 10);
           const preloadedRoomSnapshot = await setupMemberSnapshots(talkId);
@@ -434,7 +439,7 @@ document.addEventListener("DOMContentLoaded", () => {
 async function setupMemberSnapshots(talkId) {
   try {
     const perfRoomStart = performance.now();
-    const roomSnapshot = await getDoc(doc(db, "KokoKengaku", talkId));
+    const roomSnapshot = await hedged(() => getDoc(doc(db, "KokoKengaku", talkId)));
     perfSample("└ ルーム文書の取得（setupMemberSnapshots内）", performance.now() - perfRoomStart);
     if (!roomSnapshot.exists()) return null;
 
@@ -640,7 +645,7 @@ async function getAllTalkData(talkId, preloadedRoomSnapshot) {
       if (isInitialTalkLoad && !initialLoadSkipped) {
         setLoadingStage("トークルーム情報を読み込んでいます...", 25);
       }
-      roomSnapshot = await getDoc(doc(db, "KokoKengaku", talkId));
+      roomSnapshot = await hedged(() => getDoc(doc(db, "KokoKengaku", talkId)));
     }
     const roomData = roomSnapshot.data();
     applyRoomHeader(roomData);

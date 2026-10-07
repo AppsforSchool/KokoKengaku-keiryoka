@@ -3,7 +3,7 @@
 //     { appId: "OneSignalのApp ID", restApiKey: "OneSignalのREST APIキー" }
 //   ★ サイトごとにOneSignalのアプリを分ける場合は、ここのドキュメントIDだけをサイトごとに変える
 //     （チャットサイト: "onesignal" / 問題投稿サイト: "onesignal_ProblemPosting"）
-import { collection, doc, getDoc, getDocs } from "./firebase.js";
+import { collection, doc, getDoc, getDocs, hedged } from "./firebase.js";
 
 const KEY_DOC_ID = "onesignal";
 
@@ -15,7 +15,7 @@ let initStep = "";         // 初期化のどの段階か（エラー表示用�
 
 async function loadKeys(db) {
   if (keysCache) return keysCache;
-  const snap = await getDoc(doc(db, "system_keys", KEY_DOC_ID));
+  const snap = await hedged(() => getDoc(doc(db, "system_keys", KEY_DOC_ID)));
   if (!snap.exists()) throw new Error(`Firestoreの system_keys/${KEY_DOC_ID} が見つかりません。`);
   const data = snap.data();
   if (!data.appId || !data.restApiKey) throw new Error(`system_keys/${KEY_DOC_ID} に appId / restApiKey がありません。`);
@@ -68,6 +68,13 @@ export function initPush(db, userId) {
     console.warn("プッシュ通知の初期化に失敗:", e);
   });
   return initPromise;
+}
+
+// ★ 診断用：OneSignal初期化の現在の状態（失敗していれば、止まった段階を含むメッセージ）
+export function getPushInitStatus() {
+  if (initError) return "失敗: " + (initError.message || String(initError)).replace(/\n/g, " ");
+  if (initPromise) return initStep ? "初期化中（段階: " + initStep + "）" : "完了、または初期化中";
+  return "未開始";
 }
 
 // ★ ログアウト前に呼ぶ（この端末に前のユーザー宛の通知が届き続けないようにする）
