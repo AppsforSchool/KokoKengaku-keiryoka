@@ -5,6 +5,7 @@ import { perfSample } from "./perf.js";
 import { initializeApp } from "https://www.gstatic.com/firebasejs/12.14.0/firebase-app.js";
 import {
   initializeAuth,
+  indexedDBLocalPersistence,
   browserLocalPersistence,
   browserSessionPersistence,
   inMemoryPersistence,
@@ -61,11 +62,85 @@ export const app = initializeApp(firebaseConfig);
 //   候補からIndexedDBを外し、即座に読める localStorage を使う。
 //   localStorageが使えない環境では、sessionStorage（タブを閉じるまで）→ メモリ（ページを閉じるまで）の順に代替する。
 //   ※ 以前のIndexedDBに残っているログイン情報は読まないため、切り替え後に1回だけ、ログインし直しが必要。
-export const authStorageMode = "local";
+//   比較・切り分け用：URLに ?auth=idb を付けて開くと、その端末だけ IndexedDB（以前の保存先）に切り替わる（?auth=local で戻る）。
+//   切り替えると、その保存先には情報が無いので、1回ログインし直しが必要。
+function pickAuthStorage() {
+  try {
+    const fromUrl = new URLSearchParams(location.search).get("auth");
+    if (fromUrl === "local" || fromUrl === "idb") localStorage.setItem("authStorage", fromUrl);
+    const saved = localStorage.getItem("authStorage");
+    if (saved === "local" || saved === "idb") return saved;
+  } catch (e) { /* 既定値のまま */ }
+  return "local";
+}
+export const authStorageMode = pickAuthStorage();
+
+// ★ 診断用：「しばらくしてから開くと再ログインになる」原因を切り分けるための記録。
+//   起動した時点で localStorage にログイン情報が残っていたか、その有効期限、その後 Auth がログイン状態をどう判断したかを、
+//   端末の localStorage（キー authDebugLog、直近30件）に残す。
+//     ・起動時に情報が「なし」 → 保存領域のほうが消えている（ブラウザのデータ削除、Safariの自動削除、別のアプリ内ブラウザ/ホーム画面アイコン経由、等）
+//     ・起動時に情報が「あり」なのに結果が「ログアウト」 → SDKが更新に失敗してログイン情報を破棄した（トークンの更新エラー、アカウント側の問題、等）
+//   確認方法：どのページでも、URLの末尾に ?authdebug=1 を付けて開くと、記録が表示される（ログアウト状態の index.html でも可）。
+const AUTH_STORAGE_KEY = `firebase:authUser:${firebaseConfig.apiKey}:[DEFAULT]`;
+const AUTH_DEBUG_LOG_KEY = "authDebugLog";
+
+function appendAuthDebug(entry) {
+  try {
+    const log = JSON.parse(localStorage.getItem(AUTH_DEBUG_LOG_KEY) || "[]");
+    log.push({ at: new Date().toISOString(), page: location.pathname.split("/").pop() || "/", ...entry });
+    localStorage.setItem(AUTH_DEBUG_LOG_KEY, JSON.stringify(log.slice(-30)));
+  } catch (e) { /* 診断用なので失敗しても何もしない */ }
+}
+
+function readStoredAuthInfo() {
+  try {
+    const raw = localStorage.getItem(AUTH_STORAGE_KEY);
+    if (raw === null) return { stored: false };
+    const user = JSON.parse(raw);
+    const tm = user.stsTokenManager || {};
+    return {
+      stored: true,
+      hasRefreshToken: !!tm.refreshToken,
+      tokenExpiresAt: tm.expirationTime ? new Date(Number(tm.expirationTime)).toISOString() : null,
+      lastLoginAt: user.lastLoginAt ? new Date(Number(user.lastLoginAt)).toISOString() : null
+    };
+  } catch (e) {
+    return { stored: null, error: String(e && e.message || e) }; // localStorageが読めない
+  }
+}
+appendAuthDebug({ event: "起動時", mode: authStorageMode, ...(authStorageMode === "local" ? readStoredAuthInfo() : { stored: "（IndexedDBモードのため未確認）" }) }); // ★ initializeAuthより前に記録する（SDKが書き換える前の状態）
 
 export const auth = initializeAuth(app, {
-  persistence: [browserLocalPersistence, browserSessionPersistence, inMemoryPersistence]
+  persistence: authStorageMode === "idb"
+    ? [indexedDBLocalPersistence, browserLocalPersistence, browserSessionPersistence, inMemoryPersistence]
+    : [browserLocalPersistence, browserSessionPersistence, inMemoryPersistence]
 });
+
+onAuthStateChanged(auth, (user) => {
+  appendAuthDebug({ event: "Auth判定", mode: authStorageMode, loggedIn: !!user });
+  if (user) {
+    // ログイン済みのとき、情報が実際にどの保存先に書かれたか（localStorage / sessionStorage）を少し後で確認する。
+    // localStorageに無くsessionStorageにある場合は、localStorageが使えず、タブを閉じると消える状態になっている。
+    setTimeout(() => {
+      try {
+        appendAuthDebug({
+          event: "保存先の確認",
+          inLocalStorage: localStorage.getItem(AUTH_STORAGE_KEY) !== null,
+          inSessionStorage: sessionStorage.getItem(AUTH_STORAGE_KEY) !== null
+        });
+      } catch (e) { appendAuthDebug({ event: "保存先の確認", error: String(e && e.message || e) }); }
+    }, 1500);
+  }
+});
+
+try {
+  if (new URLSearchParams(location.search).get("authdebug")) {
+    window.addEventListener("load", () => setTimeout(() => {
+      const log = JSON.parse(localStorage.getItem(AUTH_DEBUG_LOG_KEY) || "[]");
+      alert("【ログイン状態の記録（新しい順）】\n" + log.slice().reverse().map((e) => JSON.stringify(e)).join("\n"));
+    }, 1500));
+  }
+} catch (e) { /* 無視 */ }
 
 // ★ Firestoreの通信方式。学校などのネットワークでは、通常の方式（WebChannel）の読み取りだけが
 //   数十秒止まることがあったため、既定を「ロングポーリング」にしている。
