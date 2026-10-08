@@ -49,7 +49,16 @@ const firebaseConfig = {
   appId: "1:740735293440:web:982702b6d53aaa18ec60e5"
 };
 
-export const app = initializeApp(firebaseConfig);
+// ★ アプリに固有の名前を付けて初期化する（既定の "[DEFAULT]" を使わない）。
+//   理由：同じ appsforschool.github.io の下にある他のサイト（問題投稿サイトや、このアプリの別コピー）は、
+//   localStorage / IndexedDB を共有している。ログイン情報の保存キーは "firebase:authUser:<APIキー>:<アプリ名>" で、
+//   既定の名前のままだと、他のページが Firebase Auth を既定設定（IndexedDB優先）で起動した瞬間に、
+//   localStorage にあるこのアプリのログイン情報を IndexedDB へ「移し替えて」localStorage から削除してしまう。
+//   実際に、使用中のページで、他のページを開いた時刻に「ログイン済み → 未ログイン」に変わる記録が取れた。
+//   アプリ名を固有にすれば、保存キーが他のサイトと衝突しない。
+//   ※ 名前を変えたので、切り替え後に1回だけ、ログインし直しが必要。
+const FIREBASE_APP_NAME = "kokokengaku-chat";
+export const app = initializeApp(firebaseConfig, FIREBASE_APP_NAME);
 // ★ Auth は getAuth() ではなく initializeAuth() で初期化する。
 //   getAuth() は、Googleログインのポップアップ/リダイレクト用に外部のiframe（apis.google.com・firebaseapp.com/__/auth/iframe）を
 //   起動時に読み込む。このアプリはID+パスワードのログインしか使わないので不要で、ブラウザの設定や拡張機能で
@@ -81,7 +90,7 @@ export const authStorageMode = pickAuthStorage();
 //     ・起動時に情報が「なし」 → 保存領域のほうが消えている（ブラウザのデータ削除、Safariの自動削除、別のアプリ内ブラウザ/ホーム画面アイコン経由、等）
 //     ・起動時に情報が「あり」なのに結果が「ログアウト」 → SDKが更新に失敗してログイン情報を破棄した（トークンの更新エラー、アカウント側の問題、等）
 //   確認方法：どのページでも、URLの末尾に ?authdebug=1 を付けて開くと、記録が表示される（ログアウト状態の index.html でも可）。
-const AUTH_STORAGE_KEY = `firebase:authUser:${firebaseConfig.apiKey}:[DEFAULT]`;
+const AUTH_STORAGE_KEY = `firebase:authUser:${firebaseConfig.apiKey}:${FIREBASE_APP_NAME}`;
 const AUTH_DEBUG_LOG_KEY = "authDebugLog";
 
 function appendAuthDebug(entry) {
@@ -130,6 +139,13 @@ onAuthStateChanged(auth, (user) => {
         });
       } catch (e) { appendAuthDebug({ event: "保存先の確認", error: String(e && e.message || e) }); }
     }, 1500);
+  }
+});
+
+// ★ このページを開いたまま、他のページ（別タブ・別サイト）がログイン情報を消したら記録する
+window.addEventListener("storage", (e) => {
+  if (e.key === AUTH_STORAGE_KEY && e.newValue === null) {
+    appendAuthDebug({ event: "他のページがログイン情報を削除した", fromUrl: e.url || "" });
   }
 });
 
