@@ -1,8 +1,9 @@
 // ★ Firestoreの通信診断（管理者の計測パネルの「通信診断を実行」ボタンから呼ばれる）。
 //   同じデータを違う読み方で取得して、どれが遅いのかを比べる。すべて「サーバーから」取得する（キャッシュは使わない）。
 //   2周して、毎回遅いのか・たまに遅いのかも見えるようにしている。
+import { getPushInitStatus } from "./notify.js";
 import {
-  db, firestoreTransport, collection, doc, getDocFromServer, getDocsFromServer,
+  auth, db, firestoreTransport, collection, doc, getDocFromServer, getDocsFromServer,
   query, where, documentId, getCountFromServer
 } from "./firebase.js";
 
@@ -18,8 +19,24 @@ async function timed(label, fn) {
   }
 }
 
+// ★ Firestore SDK を通さず（全フィールドを取得するので、実際のデータ量も分かる）、普通のHTTPS（REST API）で同じユーザー一覧を取得する。
+//   SDKの読み取りだけが遅く、これが速ければ「SDKが使うストリーム接続が途中で詰まっている」と判断できる。
+async function restFetchUsers() {
+  const token = await auth.currentUser.getIdToken();
+  const url = "https://firestore.googleapis.com/v1/projects/appsforschool-study/databases/(default)/documents/users_random?pageSize=100";
+  const res = await fetch(url, { headers: { Authorization: "Bearer " + token } });
+  if (!res.ok) throw new Error("HTTP " + res.status);
+  const text = await res.text(); // ★ 全フィールドを取得し、データ量（KB）も出す
+  const json = JSON.parse(text);
+  return `${(json.documents || []).length}件 / 約${Math.round(text.length / 1024)}KB`;
+}
+
 export async function runFirestoreDiagnostics(myUserId) {
   const lines = [`通信方式: ${firestoreTransport}（URLに ?fs=default / ?fs=auto / ?fs=long を付けて開くと切り替え可）`];
+  const conn = navigator.connection;
+  lines.push(`ブラウザ: ${navigator.userAgent}`);
+  lines.push(`回線情報: ${conn ? `type=${conn.type || "?"} effectiveType=${conn.effectiveType || "?"} rtt=${conn.rtt ?? "?"}ms downlink=${conn.downlink ?? "?"}Mbps saveData=${!!conn.saveData}` : "取得不可"}`);
+  lines.push(`OneSignal初期化: ${getPushInitStatus()}`);
   let ids = [];
   for (let round = 1; round <= 2; round++) {
     lines.push(`--- ${round}周目 ---`);
@@ -38,10 +55,11 @@ export async function runFirestoreDiagnostics(myUserId) {
     lines.push(await timed(`④ getDoc を並列（${ids.length}件）`, async () => {
       await Promise.all(ids.map((id) => getDocFromServer(doc(db, "users_random", id))));
     }));
-    lines.push(await timed("⑤ count集計（REST通信）", async () => {
+    lines.push(await timed("⑤ count集計（SDK内のREST通信）", async () => {
       const s = await getCountFromServer(collection(db, "users_random"));
       return `${s.data().count}件`;
     }));
+    lines.push(await timed("⑥ 素のHTTPS(REST)でユーザー一覧取得（SDKを使わない）", restFetchUsers));
   }
   return lines;
 }
