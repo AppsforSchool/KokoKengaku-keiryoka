@@ -2,7 +2,8 @@ import { perfMark, perfStart, perfSample, perfNote, perfShowReport, perfWatchSta
 import { initPush, logoutPush, setupPushButton, sendProfileChangeNotification } from "./notify.js";
 
 import { runFirestoreDiagnostics } from "./diag.js";
-import { firestoreTransport, firestoreCacheMode, hedged, auth, db, onAuthStateChanged, signOut, collection, doc, getDoc, getDocs, addDoc, setDoc, updateDoc, query, where, onSnapshot, serverTimestamp, getCountFromServer } from "./firebase.js";
+import { probeEnvironment, attachRecoveryButton } from "./recover.js";
+import { firestoreTransport, firestoreCacheMode, authStorageMode, hedged, auth, db, onAuthStateChanged, signOut, collection, doc, getDoc, getDocs, addDoc, setDoc, updateDoc, query, where, onSnapshot, serverTimestamp, getCountFromServer } from "./firebase.js";
 
 perfMark("JSモジュールの読み込み・実行開始（HTML解析・Firebase等の取得）");
 
@@ -149,9 +150,17 @@ function closeDrawer() {
 document.addEventListener("DOMContentLoaded", () => {
   perfMark("DOMContentLoaded（DOM構築完了まで）");
   // ★ 読み込みが長引いたら、オーバーレイに「どの段階で止まっているか」を表示する（スマホでもコンソール無しで確認できる）
+  let stallEnvText = "";
   perfWatchStall(
     () => loadingOverlay.classList.contains("hidden"),
-    (sec, label) => setLoadingStage(`読み込みに時間がかかっています（${sec}秒経過）／最後に完了した段階: ${label}`)
+    (sec, label) => {
+      setLoadingStage(`読み込みに時間がかかっています（${sec}秒経過）／最後に完了した段階: ${label}${stallEnvText ? "／" + stallEnvText : ""}`);
+      if (!stallEnvText) {
+        stallEnvText = "ブラウザ状態を確認中...";
+        probeEnvironment().then((text) => { stallEnvText = text; });
+      }
+      attachRecoveryButton(loadingOverlay); // ★ 止まったブラウザから抜け出す手段（ログイン情報のリセット）
+    }
   );
   onAuthStateChanged(auth, async (user) => {
    try {
@@ -194,7 +203,7 @@ document.addEventListener("DOMContentLoaded", () => {
         }
 
         // ★ プッシュ通知の初期化（失敗してもトーク一覧の表示には影響させない）
-        perfNote(`Firestore通信方式: ${firestoreTransport} / 永続キャッシュ: ${firestoreCacheMode}`);
+        perfNote(`Firestore通信方式: ${firestoreTransport} / 永続キャッシュ: ${firestoreCacheMode} / ログイン情報の保存先: ${authStorageMode}`);
         const endPushPerf = perfStart("OneSignal初期化（キー取得・SDK・login）");
         Promise.resolve(initPush(db, myUserId)).then(endPushPerf, endPushPerf);
         setupPushButton("enable-push-button");

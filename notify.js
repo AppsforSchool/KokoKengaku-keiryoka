@@ -38,6 +38,9 @@ export function initPush(db, userId) {
   initPromise = (async () => {
     initStep = "Firestoreからキーを取得中";
     const { appId } = await loadKeys(db);
+    // ★ キー取得は終わったので、段階の表示を進める（以前はここが更新されず、SDKが読み込めない場合でも
+    //   「Firestoreからキーを取得中」と表示されて、原因を見誤りやすかった）
+    initStep = "OneSignal SDK（OneSignalSDK.page.js）の読み込み待ち";
     // GitHub Pagesのサブパス公開でも動くよう、現在のページのフォルダをService Workerの範囲にする
     const base = location.pathname.replace(/[^/]*$/, "");
     window.OneSignalDeferred = window.OneSignalDeferred || [];
@@ -72,8 +75,8 @@ export function initPush(db, userId) {
 
 // ★ 診断用：OneSignal初期化の現在の状態（失敗していれば、止まった段階を含むメッセージ）
 export function getPushInitStatus() {
-  if (initError) return "失敗: " + (initError.message || String(initError)).replace(/\n/g, " ");
-  if (initPromise) return initStep ? "初期化中（段階: " + initStep + "）" : "完了、または初期化中";
+  if (initError) return "失敗: " + (initError.message || String(initError)).replace(/\n/g, " ") + " / window.OneSignal: " + typeof window.OneSignal;
+  if (initPromise) return (initStep ? "初期化中（段階: " + initStep + "）" : "完了、または初期化中") + " / window.OneSignal: " + typeof window.OneSignal;
   return "未開始";
 }
 

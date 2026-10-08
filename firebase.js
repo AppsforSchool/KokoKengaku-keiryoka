@@ -4,7 +4,10 @@
 import { perfSample } from "./perf.js";
 import { initializeApp } from "https://www.gstatic.com/firebasejs/12.14.0/firebase-app.js";
 import {
-  getAuth,
+  initializeAuth,
+  browserLocalPersistence,
+  browserSessionPersistence,
+  inMemoryPersistence,
   onAuthStateChanged,
   signInWithEmailAndPassword,
   signOut
@@ -46,7 +49,23 @@ const firebaseConfig = {
 };
 
 export const app = initializeApp(firebaseConfig);
-export const auth = getAuth(app);
+// ★ Auth は getAuth() ではなく initializeAuth() で初期化する。
+//   getAuth() は、Googleログインのポップアップ/リダイレクト用に外部のiframe（apis.google.com・firebaseapp.com/__/auth/iframe）を
+//   起動時に読み込む。このアプリはID+パスワードのログインしか使わないので不要で、ブラウザの設定や拡張機能で
+//   これがブロックされると「ログイン状態の確定」が進まなくなることがあるため、外している。
+//
+// ★ ログイン情報の保存先は、全ブラウザで localStorage にする。
+//   Safari（iPhone/iPad/Mac）では、IndexedDBの最初のアクセスが約10秒止まることがあり（計測：ログイン状態の確定に9.99秒、
+//   外部通信が始まる前の約9.4秒が空白）、その間ずっと読み込み画面のままになる。
+//   Firebase Authは、保存先の候補にIndexedDBが入っているだけで、既存のログイン情報を探すために必ずそこを読みに行くので、
+//   候補からIndexedDBを外し、即座に読める localStorage を使う。
+//   localStorageが使えない環境では、sessionStorage（タブを閉じるまで）→ メモリ（ページを閉じるまで）の順に代替する。
+//   ※ 以前のIndexedDBに残っているログイン情報は読まないため、切り替え後に1回だけ、ログインし直しが必要。
+export const authStorageMode = "local";
+
+export const auth = initializeAuth(app, {
+  persistence: [browserLocalPersistence, browserSessionPersistence, inMemoryPersistence]
+});
 
 // ★ Firestoreの通信方式。学校などのネットワークでは、通常の方式（WebChannel）の読み取りだけが
 //   数十秒止まることがあったため、既定を「ロングポーリング」にしている。

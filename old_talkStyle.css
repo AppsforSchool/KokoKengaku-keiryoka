@@ -1491,7 +1491,9 @@ img.avatar-circle.large { width: 4.4rem; height: 4.4rem; }
 }
 .modal-content > .modal-header {
   position: sticky;
-  top: 0;
+  /* ★ stickyの基準位置は、スクロールする枠の「余白の内側」。枠の余白(padding)と同じ分だけマイナスにして、
+     ヘッダーを枠の一番上に揃える（0のままだと余白の分だけ下にずれ、上にスクロール中の内容が見えてしまう） */
+  top: -20px;
   z-index: 5;
 }
 .modal-content > .modal-header {

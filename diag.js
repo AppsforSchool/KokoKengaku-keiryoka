@@ -37,6 +37,12 @@ export async function runFirestoreDiagnostics(myUserId) {
   lines.push(`ブラウザ: ${navigator.userAgent}`);
   lines.push(`回線情報: ${conn ? `type=${conn.type || "?"} effectiveType=${conn.effectiveType || "?"} rtt=${conn.rtt ?? "?"}ms downlink=${conn.downlink ?? "?"}Mbps saveData=${!!conn.saveData}` : "取得不可"}`);
   lines.push(`OneSignal初期化: ${getPushInitStatus()}`);
+  const oneSignalRes = performance.getEntriesByType("resource").filter((r) => r.name.includes("onesignal"));
+  lines.push("OneSignal関連の通信: " + (oneSignalRes.length
+    ? oneSignalRes.map((r) => `${r.name.split("/").pop().split("?")[0]} ${Math.round(r.duration)}ms`).join(" , ")
+    : "記録なし（SDKが読み込まれていない、またはブロックされている可能性）"));
+  const gapiRes = performance.getEntriesByType("resource").filter((r) => r.name.includes("apis.google.com") || r.name.includes("/__/auth/iframe"));
+  lines.push("Googleの認証用iframe/スクリプト: " + (gapiRes.length ? `${gapiRes.length}件あり（initializeAuth版が反映されていれば0件のはず）` : "なし（正常）"));
   let ids = [];
   for (let round = 1; round <= 2; round++) {
     lines.push(`--- ${round}周目 ---`);
