@@ -5,7 +5,6 @@ import { perfSample } from "./perf.js";
 import { initializeApp } from "https://www.gstatic.com/firebasejs/12.14.0/firebase-app.js";
 import {
   initializeAuth,
-  indexedDBLocalPersistence,
   browserLocalPersistence,
   browserSessionPersistence,
   inMemoryPersistence,
@@ -49,16 +48,14 @@ const firebaseConfig = {
   appId: "1:740735293440:web:982702b6d53aaa18ec60e5"
 };
 
-// ★ アプリに固有の名前を付けて初期化する（既定の "[DEFAULT]" を使わない）。
-//   理由：同じ appsforschool.github.io の下にある他のサイト（問題投稿サイトや、このアプリの別コピー）は、
-//   localStorage / IndexedDB を共有している。ログイン情報の保存キーは "firebase:authUser:<APIキー>:<アプリ名>" で、
-//   既定の名前のままだと、他のページが Firebase Auth を既定設定（IndexedDB優先）で起動した瞬間に、
-//   localStorage にあるこのアプリのログイン情報を IndexedDB へ「移し替えて」localStorage から削除してしまう。
-//   実際に、使用中のページで、他のページを開いた時刻に「ログイン済み → 未ログイン」に変わる記録が取れた。
-//   アプリ名を固有にすれば、保存キーが他のサイトと衝突しない。
-//   ※ 名前を変えたので、切り替え後に1回だけ、ログインし直しが必要。
-const FIREBASE_APP_NAME = "kokokengaku-chat";
-export const app = initializeApp(firebaseConfig, FIREBASE_APP_NAME);
+// ★ アプリ名は付けない（既定の "[DEFAULT]"）。
+//   ログイン情報の保存キーは "firebase:authUser:<APIキー>:[DEFAULT]" になり、同じ appsforschool.github.io の下にある
+//   すべてのサイト（チャット・問題投稿など）で同じキーを使う ＝ どれか1つのサイトでログインすれば、全サイトでログイン状態になる。
+//   ★★ ただし、これは「全サイトの Auth の初期化設定（保存先の候補）が同じ」であることが前提。
+//      1つでも違う設定（getAuth() の既定＝IndexedDB優先、など）のサイトがあると、そのサイトを開いた瞬間に、
+//      localStorage のログイン情報を別の保存先へ「移し替えて localStorage から削除」するため、他のサイトがログアウトになる。
+//      Auth の初期化部分（下の initializeAuth）は、全サイトで一字一句同じにすること。変更するときも全サイト同時に。
+export const app = initializeApp(firebaseConfig);
 // ★ Auth は getAuth() ではなく initializeAuth() で初期化する。
 //   getAuth() は、Googleログインのポップアップ/リダイレクト用に外部のiframe（apis.google.com・firebaseapp.com/__/auth/iframe）を
 //   起動時に読み込む。このアプリはID+パスワードのログインしか使わないので不要で、ブラウザの設定や拡張機能で
@@ -71,18 +68,9 @@ export const app = initializeApp(firebaseConfig, FIREBASE_APP_NAME);
 //   候補からIndexedDBを外し、即座に読める localStorage を使う。
 //   localStorageが使えない環境では、sessionStorage（タブを閉じるまで）→ メモリ（ページを閉じるまで）の順に代替する。
 //   ※ 以前のIndexedDBに残っているログイン情報は読まないため、切り替え後に1回だけ、ログインし直しが必要。
-//   比較・切り分け用：URLに ?auth=idb を付けて開くと、その端末だけ IndexedDB（以前の保存先）に切り替わる（?auth=local で戻る）。
-//   切り替えると、その保存先には情報が無いので、1回ログインし直しが必要。
-function pickAuthStorage() {
-  try {
-    const fromUrl = new URLSearchParams(location.search).get("auth");
-    if (fromUrl === "local" || fromUrl === "idb") localStorage.setItem("authStorage", fromUrl);
-    const saved = localStorage.getItem("authStorage");
-    if (saved === "local" || saved === "idb") return saved;
-  } catch (e) { /* 既定値のまま */ }
-  return "local";
-}
-export const authStorageMode = pickAuthStorage();
+//   ※ ログアウトすると、全サイトで同時にログアウトになる（保存キーを共有しているため。仕様）。
+//   以前あった ?auth=idb での切り替えは廃止した（全サイトで保存先を揃えないと、他のサイトのログインを壊すため）。
+export const authStorageMode = "local";
 
 // ★ 診断用：「しばらくしてから開くと再ログインになる」原因を切り分けるための記録。
 //   起動した時点で localStorage にログイン情報が残っていたか、その有効期限、その後 Auth がログイン状態をどう判断したかを、
@@ -90,7 +78,7 @@ export const authStorageMode = pickAuthStorage();
 //     ・起動時に情報が「なし」 → 保存領域のほうが消えている（ブラウザのデータ削除、Safariの自動削除、別のアプリ内ブラウザ/ホーム画面アイコン経由、等）
 //     ・起動時に情報が「あり」なのに結果が「ログアウト」 → SDKが更新に失敗してログイン情報を破棄した（トークンの更新エラー、アカウント側の問題、等）
 //   確認方法：どのページでも、URLの末尾に ?authdebug=1 を付けて開くと、記録が表示される（ログアウト状態の index.html でも可）。
-const AUTH_STORAGE_KEY = `firebase:authUser:${firebaseConfig.apiKey}:${FIREBASE_APP_NAME}`;
+const AUTH_STORAGE_KEY = `firebase:authUser:${firebaseConfig.apiKey}:[DEFAULT]`;
 const AUTH_DEBUG_LOG_KEY = "authDebugLog";
 
 function appendAuthDebug(entry) {
@@ -117,12 +105,14 @@ function readStoredAuthInfo() {
     return { stored: null, error: String(e && e.message || e) }; // localStorageが読めない
   }
 }
-appendAuthDebug({ event: "起動時", mode: authStorageMode, ...(authStorageMode === "local" ? readStoredAuthInfo() : { stored: "（IndexedDBモードのため未確認）" }) }); // ★ initializeAuthより前に記録する（SDKが書き換える前の状態）
+function listFirebaseKeys() {
+  try { return Object.keys(localStorage).filter((k) => k.startsWith("firebase:")).map((k) => k.replace(/^firebase:authUser:[^:]+:/, "authUser:")); }
+  catch (e) { return null; }
+}
+appendAuthDebug({ event: "起動時", mode: authStorageMode, usingKey: AUTH_STORAGE_KEY.replace(/^firebase:authUser:[^:]+:/, "authUser:"), firebaseKeysInLocalStorage: listFirebaseKeys(), ...(authStorageMode === "local" ? readStoredAuthInfo() : { stored: "（IndexedDBモードのため未確認）" }) }); // ★ initializeAuthより前に記録する（SDKが書き換える前の状態）
 
 export const auth = initializeAuth(app, {
-  persistence: authStorageMode === "idb"
-    ? [indexedDBLocalPersistence, browserLocalPersistence, browserSessionPersistence, inMemoryPersistence]
-    : [browserLocalPersistence, browserSessionPersistence, inMemoryPersistence]
+  persistence: [browserLocalPersistence, browserSessionPersistence, inMemoryPersistence]
 });
 
 onAuthStateChanged(auth, (user) => {
@@ -142,10 +132,21 @@ onAuthStateChanged(auth, (user) => {
   }
 });
 
-// ★ このページを開いたまま、他のページ（別タブ・別サイト）がログイン情報を消したら記録する
+// ★ このページを開いたまま、他のページ（別タブ・別サイト）が localStorage を変更したら記録する。
+//   ・key が null のとき ＝ 他のページが localStorage.clear() を呼んだ（保存内容がすべて消える）
+//   ・Firebase のログイン情報のキーが変更/削除されたとき ＝ どのキーで、どのページ(url)からかを記録する
+//   （値そのものは記録しない）
 window.addEventListener("storage", (e) => {
-  if (e.key === AUTH_STORAGE_KEY && e.newValue === null) {
-    appendAuthDebug({ event: "他のページがログイン情報を削除した", fromUrl: e.url || "" });
+  if (e.storageArea !== localStorage) return;
+  if (e.key === null) {
+    appendAuthDebug({ event: "他のページが localStorage.clear() を実行した", fromUrl: e.url || "" });
+  } else if (e.key.startsWith("firebase:")) {
+    appendAuthDebug({
+      event: e.newValue === null ? "他のページがFirebaseのキーを削除した" : "他のページがFirebaseのキーを書き換えた",
+      key: e.key.replace(/^firebase:authUser:[^:]+:/, "authUser:"),
+      isOurKey: e.key === AUTH_STORAGE_KEY,
+      fromUrl: e.url || ""
+    });
   }
 });
 
