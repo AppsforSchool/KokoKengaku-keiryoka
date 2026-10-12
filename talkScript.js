@@ -1,5 +1,5 @@
 import { perfMark, perfStart, perfSample, perfNote, perfShowReport, perfWatchStall } from "./perf.js";
-import { initPush, logoutPush, setupPushButton, sendMessageNotification, sendPushToUsers, sendProfileChangeNotification } from "./notify.js";
+import { initPush, logoutPush, setupPushButton, sendMessageNotification, sendPushToUsers, sendProfileChangeNotification, notifyPageLoadFinished } from "./notify.js";
 
 import { runFirestoreDiagnostics } from "./diag.js";
 import { probeEnvironment, attachRecoveryButton } from "./recover.js";
@@ -557,6 +557,7 @@ function hideLoadingOverlayNow() {
   perfShowReport({ isAdmin: meIsAdmin, page: "talk.html（トーク画面）", diagnostics: () => runFirestoreDiagnostics(myUserId) }); // ★ 管理者にだけ計測結果を表示
   loadingOverlay.classList.add("hidden");
   loadingOverlaySkipButton.classList.add("hidden");
+  notifyPageLoadFinished(); // ★ この時点でOneSignalの初期化が未完了なら、「OneSignalを初期化中…」を表示する
   if (selectionContainer) {
     selectionContainer.classList.remove("hidden");
   }

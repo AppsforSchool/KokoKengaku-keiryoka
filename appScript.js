@@ -1,5 +1,5 @@
 import { perfMark, perfStart, perfSample, perfNote, perfShowReport, perfWatchStall } from "./perf.js";
-import { initPush, logoutPush, setupPushButton, sendProfileChangeNotification } from "./notify.js";
+import { initPush, logoutPush, setupPushButton, sendProfileChangeNotification, notifyPageLoadFinished } from "./notify.js";
 
 import { runFirestoreDiagnostics } from "./diag.js";
 import { probeEnvironment, attachRecoveryButton } from "./recover.js";
@@ -610,6 +610,7 @@ function hideLoadingOverlayNowForAppList() {
     selectionContainer.classList.remove("hidden");
   }
   perfMark("オーバーレイを閉じて一覧を表示");
+  notifyPageLoadFinished(); // ★ この時点でOneSignalの初期化が未完了なら、「OneSignalを初期化中…」を表示する
   perfShowReport({ isAdmin: meIsAdmin, page: "app.html（トーク一覧）", diagnostics: () => runFirestoreDiagnostics(myUserId) }); // ★ 管理者にだけ計測結果を表示
 }
 

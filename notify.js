@@ -30,11 +30,66 @@ function withTimeout(promise, ms, message) {
   ]);
 }
 
+// ★ 「OneSignalを初期化中…」バッジ
+//   ページの読み込みが終わった時点で、OneSignalの初期化がまだ終わっていなければ、画面左上（ヘッダーのすぐ下）に表示し、
+//   初期化が終わったら（成功でも失敗でも）消す。表示の対象は、ページを開いたときの最初の自動初期化だけで、
+//   「通知をオンにする」ボタンからの再試行中は出さない（ボタン側に進行状況が出るため）。
+let pushBadgeTracking = false;     // 最初の自動初期化を追跡中か
+let pushBadgeDone = false;         // その初期化が終わったか（成功・失敗とも）
+let pageLoadFinished = false;      // ページの読み込みが終わったか
+let pushBadgeEl = null;
+
+function ensurePushBadge() {
+  if (pushBadgeEl) return pushBadgeEl;
+  if (!document.getElementById("push-init-badge-style")) {
+    const style = document.createElement("style");
+    style.id = "push-init-badge-style";
+    style.textContent =
+      "#push-init-badge{position:fixed;left:12px;z-index:60;padding:.4rem .8rem;border-radius:10px;" +
+      "background:rgba(36,48,61,.9);color:#fff;font-size:.78rem;font-weight:700;line-height:1.4;" +
+      "box-shadow:0 4px 14px rgba(0,0,0,.2);pointer-events:none;white-space:nowrap}" +
+      "#push-init-badge.hidden{display:none}";
+    document.head.appendChild(style);
+  }
+  pushBadgeEl = document.createElement("div");
+  pushBadgeEl.id = "push-init-badge";
+  pushBadgeEl.className = "hidden";
+  pushBadgeEl.setAttribute("role", "status");
+  pushBadgeEl.textContent = "OneSignalを初期化中…";
+  document.body.appendChild(pushBadgeEl);
+  window.addEventListener("resize", positionPushBadge);
+  return pushBadgeEl;
+}
+
+// ヘッダーのすぐ下に置く（ヘッダーの高さは画面幅やUIの新旧で変わるので、表示のたびに測る）
+function positionPushBadge() {
+  if (!pushBadgeEl) return;
+  const header = document.getElementById("app-header");
+  const bottom = header ? Math.max(header.getBoundingClientRect().bottom, 0) : 0;
+  pushBadgeEl.style.top = (bottom + 8) + "px";
+}
+
+function updatePushBadge() {
+  const show = pageLoadFinished && pushBadgeTracking && !pushBadgeDone;
+  if (!show && !pushBadgeEl) return;
+  const el = ensurePushBadge();
+  if (show) positionPushBadge();
+  el.classList.toggle("hidden", !show);
+}
+
+// ★ ページの読み込みが終わった（読み込み画面を閉じた）ときに呼ぶ
+export function notifyPageLoadFinished() {
+  pageLoadFinished = true;
+  updatePushBadge();
+}
+
 // ★ ログイン後に1回呼ぶ。OneSignalを初期化し、Firebaseのユーザー名(userId)と端末を紐づける
 export function initPush(db, userId) {
   ctx = { db, userId };
   if (initPromise) return initPromise;
   initError = null;
+  const trackBadge = !pushBadgeTracking && !pushBadgeDone; // ★ ページを開いたときの最初の初期化だけバッジの対象にする
+  if (trackBadge) { pushBadgeTracking = true; updatePushBadge(); }
   initPromise = (async () => {
     initStep = "Firestoreからキーを取得中";
     const { appId } = await loadKeys(db);
@@ -69,6 +124,9 @@ export function initPush(db, userId) {
     initError = e;
     initPromise = null;   // 次回押したときに再試行できるようにする
     console.warn("プッシュ通知の初期化に失敗:", e);
+  }).finally(() => {
+    // ★ 成功・失敗のどちらでも、最初の初期化が終わったらバッジを消す
+    if (trackBadge) { pushBadgeDone = true; updatePushBadge(); }
   });
   return initPromise;
 }
