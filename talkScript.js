@@ -2,6 +2,7 @@ import { perfMark, perfStart, perfSample, perfNote, perfShowReport, perfWatchSta
 import { initPush, logoutPush, setupPushButton, sendMessageNotification, sendPushToUsers, sendProfileChangeNotification, notifyPageLoadFinished } from "./notify.js";
 
 import { runFirestoreDiagnostics } from "./diag.js";
+import { createGaugeBadge } from "./statusBadge.js";
 import { probeEnvironment, attachRecoveryButton } from "./recover.js";
 import { firestoreTransport, firestoreCacheMode, authStorageMode, hedged, auth, db, onAuthStateChanged, signOut, collection, doc, getDoc, getDocs, addDoc, setDoc, updateDoc, query, where, orderBy, onSnapshot, writeBatch, serverTimestamp, arrayUnion, arrayRemove, Timestamp, documentId } from "./firebase.js";
 
@@ -311,6 +312,7 @@ document.addEventListener("DOMContentLoaded", () => {
   loadingOverlaySkipButton.addEventListener("click", () => {
     initialLoadSkipped = true;
     hideLoadingOverlayNow();
+    refreshImageBadge(); // ★ 画像がまだ読み込み中なら、画面左上に「画像を読み込み中…(a/b)」とゲージを出す
   });
   
   drawerOverlay = document.getElementById("drawerOverlay");
@@ -566,30 +568,52 @@ function hideLoadingOverlayNow() {
   scrollTalkAreaToTarget();
 }
 
+// ★ 「あとで読み込む」を押したあと、画像がまだ読み込み中のあいだ、画面左上（OneSignalの表示の下）に出す
+//   「画像を読み込み中…(a/b)」と、その下の進捗ゲージ（a/b ＝ 読めた画像 / 全画像）。全部読めたら消える。
+let imageBadge = null;
+const imageProgress = { loaded: 0, total: 0, active: false };
+
+function refreshImageBadge() {
+  const show = initialLoadSkipped && imageProgress.active && imageProgress.loaded < imageProgress.total;
+  if (!show && !imageBadge) return;
+  if (!imageBadge) imageBadge = createGaugeBadge(2); // order=2 ＝ OneSignalの表示（order=1）の下
+  if (show) {
+    imageBadge.set(`画像を読み込み中…(${imageProgress.loaded}/${imageProgress.total})`, imageProgress.loaded / imageProgress.total);
+    imageBadge.show();
+  } else {
+    imageBadge.hide();
+  }
+}
+
 // ★ 渡された画像要素すべての読み込み（成功／失敗どちらでも）を待ってからオーバーレイを閉じる。
 //   読み込み中は「画像を読み込んでいます (n/m)」を表示する。
-//   「あとで読み込む」が既に押されていれば何もしない（既にオーバーレイは閉じている）。
+//   「あとで読み込む」が押されているとき（押された後に呼ばれた場合も含む）は、オーバーレイは閉じたままで、
+//   代わりに画面左上の「画像を読み込み中…(a/b)」とゲージで進み具合を見せる。
 async function waitForImagesThenHideOverlay(images) {
-  if (initialLoadSkipped) return;
-
   if (!images || images.length === 0) {
-    hideLoadingOverlayNow();
+    if (!initialLoadSkipped) hideLoadingOverlayNow();
     return;
   }
 
   const total = images.length;
-  let loadedCount = 0;
+  imageProgress.loaded = 0;
+  imageProgress.total = total;
+  imageProgress.active = true;
 
-  loadingOverlayText.textContent = `画像を読み込んでいます (0/${total})`;
-  loadingOverlaySkipButton.classList.remove("hidden");
+  if (!initialLoadSkipped) {
+    loadingOverlayText.textContent = `画像を読み込んでいます (0/${total})`;
+    loadingOverlaySkipButton.classList.remove("hidden");
+  }
+  refreshImageBadge(); // すでに「あとで読み込む」済みなら、ここで表示される
 
   await Promise.all(images.map((img) => {
     return new Promise((resolve) => {
       const onDone = () => {
-        loadedCount++;
+        imageProgress.loaded++;
         if (!initialLoadSkipped) {
-          loadingOverlayText.textContent = `画像を読み込んでいます (${loadedCount}/${total})`;
+          loadingOverlayText.textContent = `画像を読み込んでいます (${imageProgress.loaded}/${total})`;
         }
+        refreshImageBadge();
         resolve();
       };
       // すでに読み込み済み（キャッシュ等）ならすぐ完了扱いにする
@@ -601,6 +625,9 @@ async function waitForImagesThenHideOverlay(images) {
       img.addEventListener("error", onDone, { once: true });
     });
   }));
+
+  imageProgress.active = false;
+  refreshImageBadge(); // 全部読めたので消す
 
   if (!initialLoadSkipped) {
     hideLoadingOverlayNow();

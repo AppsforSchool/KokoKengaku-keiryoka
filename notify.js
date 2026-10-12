@@ -4,6 +4,7 @@
 //   ★ サイトごとにOneSignalのアプリを分ける場合は、ここのドキュメントIDだけをサイトごとに変える
 //     （チャットサイト: "onesignal" / 問題投稿サイト: "onesignal_ProblemPosting"）
 import { collection, doc, getDoc, getDocs, hedged } from "./firebase.js";
+import { createTextBadge, setStatusBadgeVisible } from "./statusBadge.js";
 
 const KEY_DOC_ID = "onesignal";
 
@@ -39,42 +40,11 @@ let pushBadgeDone = false;         // その初期化が終わったか（成功
 let pageLoadFinished = false;      // ページの読み込みが終わったか
 let pushBadgeEl = null;
 
-function ensurePushBadge() {
-  if (pushBadgeEl) return pushBadgeEl;
-  if (!document.getElementById("push-init-badge-style")) {
-    const style = document.createElement("style");
-    style.id = "push-init-badge-style";
-    style.textContent =
-      "#push-init-badge{position:fixed;left:12px;z-index:60;padding:.4rem .8rem;border-radius:10px;" +
-      "background:rgba(36,48,61,.9);color:#fff;font-size:.78rem;font-weight:700;line-height:1.4;" +
-      "box-shadow:0 4px 14px rgba(0,0,0,.2);pointer-events:none;white-space:nowrap}" +
-      "#push-init-badge.hidden{display:none}";
-    document.head.appendChild(style);
-  }
-  pushBadgeEl = document.createElement("div");
-  pushBadgeEl.id = "push-init-badge";
-  pushBadgeEl.className = "hidden";
-  pushBadgeEl.setAttribute("role", "status");
-  pushBadgeEl.textContent = "OneSignalを初期化中…";
-  document.body.appendChild(pushBadgeEl);
-  window.addEventListener("resize", positionPushBadge);
-  return pushBadgeEl;
-}
-
-// ヘッダーのすぐ下に置く（ヘッダーの高さは画面幅やUIの新旧で変わるので、表示のたびに測る）
-function positionPushBadge() {
-  if (!pushBadgeEl) return;
-  const header = document.getElementById("app-header");
-  const bottom = header ? Math.max(header.getBoundingClientRect().bottom, 0) : 0;
-  pushBadgeEl.style.top = (bottom + 8) + "px";
-}
-
 function updatePushBadge() {
   const show = pageLoadFinished && pushBadgeTracking && !pushBadgeDone;
   if (!show && !pushBadgeEl) return;
-  const el = ensurePushBadge();
-  if (show) positionPushBadge();
-  el.classList.toggle("hidden", !show);
+  if (!pushBadgeEl) pushBadgeEl = createTextBadge("OneSignalを初期化中…", 1); // ★ 共通部品（statusBadge.js）。order=1 ＝ いちばん上
+  setStatusBadgeVisible(pushBadgeEl, show);
 }
 
 // ★ ページの読み込みが終わった（読み込み画面を閉じた）ときに呼ぶ
